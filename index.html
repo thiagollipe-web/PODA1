@@ -1301,17 +1301,6 @@ document.getElementById('btn-restart').addEventListener('click', (e) => { e.prev
   const dpad = document.getElementById('dpad');
   if (!dpad) return;
 
-  const center = dpad.querySelector('.dpad-center');
-  if (center) {
-    const interact = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      interactWithBomb();
-    };
-    center.addEventListener('pointerdown', interact, { passive: false });
-    center.addEventListener('click', interact, { passive: false });
-  }
-
   const directions = {
     up:    [0, -1],
     down:  [0,  1],
@@ -1331,7 +1320,6 @@ document.getElementById('btn-restart').addEventListener('click', (e) => { e.prev
 
       button.classList.add('pressed');
       move(dx, dy);
-      if (typeof Audio !== 'undefined' && Audio.step) Audio.step();
 
       setTimeout(() => button.classList.remove('pressed'), 90);
     };
@@ -1360,14 +1348,7 @@ document.getElementById('btn-restart').addEventListener('click', (e) => { e.prev
       setTimeout(() => bombButton.classList.remove('pressed'), 120);
     };
     bombButton.addEventListener('pointerdown', pressBomb, { passive: false });
-    bombButton.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-    }, { passive: false });
-    bombButton.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-    });
+    bombButton.addEventListener('click', pressBomb, { passive: false });
   }
 })();
 
@@ -1382,11 +1363,6 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     e.preventDefault();
     if (state.status === 'playing' || state.status === 'paused') doPauseToggle();
-    return;
-  }
-  if (e.key === 'p' || e.key === 'P') {
-    e.preventDefault();
-    interactWithBomb();
     return;
   }
   if (e.key === 'r' || e.key === 'R') {
