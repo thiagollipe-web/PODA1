@@ -460,7 +460,7 @@
 
 <script>
 /* ============================================================
-   PODA — Labirinto (final corrigido)
+   PODA — Labirinto (final blindado)
    ============================================================ */
 
 const COLS = 15, ROWS = 11, TILE = 32;
@@ -851,34 +851,54 @@ function tileCenter(x, y) { return { x: x * TILE + TILE / 2, y: y * TILE + TILE 
 
 function loadLevel(n) {
   state.level = n;
-  state.maze = generateMaze(n * 2654435761 + 17);
-  state.robot.x = START.x; state.robot.y = START.y;
+
+  const requestedOrbs = Math.min(5, 3 + Math.floor(n / 100));
+  const rng = mulberry32(n * 1013 + 7);
+
+  // Geração validada: cada fase precisa ter uma rota completa START -> BOMBA
+  // e espaço suficiente para todos os orbes nessa mesma componente navegável.
+  let maze = null;
+  let route = [];
+  let orbCells = [];
+
+  for (let attempt = 0; attempt < 50; attempt++) {
+    maze = generateMaze(n * 2654435761 + 17 + attempt * 104729);
+    route = getRouteCells(maze, START, EXIT);
+
+    if (route.length < requestedOrbs + 8) continue;
+
+    orbCells = chooseGuaranteedOrbCells(maze, START, EXIT, requestedOrbs, rng);
+    if (orbCells.length === requestedOrbs) break;
+  }
+
+  // Fallback seguro: usa a rota inteira START -> BOMBA.
+  // Como o gerador cria um labirinto conectado, esses pontos são alcançáveis.
+  if (!maze) maze = generateMaze(n * 2654435761 + 17);
+  route = getRouteCells(maze, START, EXIT);
+
+  if (orbCells.length !== requestedOrbs) {
+    const safeRoute = route.slice(2, Math.max(2, route.length - 2));
+    orbCells = shuffle(safeRoute, rng).slice(0, requestedOrbs);
+  }
+
+  // Última defesa: se uma implementação futura quebrar a seleção dos orbes,
+  // nunca iniciaremos uma fase com menos orbes do que o objetivo.
+  if (orbCells.length < requestedOrbs) {
+    throw new Error('Falha de validação da fase ' + n + ': orbes insuficientes.');
+  }
+
+  state.maze = maze;
+  state.robot.x = START.x;
+  state.robot.y = START.y;
   const c = tileCenter(START.x, START.y);
-  state.robot.rx = c.x; state.robot.ry = c.y;
+  state.robot.rx = c.x;
+  state.robot.ry = c.y;
   state.robot.facing = 'down';
   state.ghosts = [];
   state.steps = 0;
   state.lastTickSecond = -1;
 
-  const exclude = new Set([START.x + ',' + START.y, EXIT.x + ',' + EXIT.y]);
-  const nOrbs = Math.min(5, 3 + Math.floor(n / 100));
-  const rng = mulberry32(n * 1013 + 7);
-
-  // Garante que todos os orbes estejam em células acessíveis e que
-  // exista caminho de cada orb de volta até a bomba.
-  const orbCells = chooseGuaranteedOrbCells(
-    state.maze,
-    START,
-    EXIT,
-    nOrbs,
-    rng
-  );
-
-  state.orbs = orbCells.map(d => ({
-    x: d.x,
-    y: d.y,
-    collected: false
-  }));
+  state.orbs = orbCells.map(d => ({ x:d.x, y:d.y, collected:false }));
   state.orbsTotal = state.orbs.length;
   state.orbsCollected = 0;
 
