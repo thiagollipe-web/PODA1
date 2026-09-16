@@ -652,40 +652,66 @@ function chooseGuaranteedOrbCells(maze, start, bomb, count, rng) {
   const all = reachableFrom(maze, start).filter(c =>
     !(c.x===start.x && c.y===start.y) &&
     !(c.x===bomb.x && c.y===bomb.y) &&
-    Math.abs(c.x-start.x)+Math.abs(c.y-start.y) > 2
+    Math.abs(c.x-start.x)+Math.abs(c.y-start.y) > 2 &&
+    Number.isFinite(shortestPathDistance(maze, c, bomb))
   );
+
   const dead = findDeadEnds(maze, new Set([
     start.x+','+start.y,
     bomb.x+','+bomb.y
-  ]));
+  ])).filter(c => Number.isFinite(shortestPathDistance(maze, c, bomb)));
 
-  const byKey = new Map(all.map(c => [c.x+','+c.y, c]));
-  const preferred = dead.filter(c => byKey.has(c.x+','+c.y));
+  // Distribui os orbes ao longo do caminho real START -> BOMBA.
+  // Isso garante que o jogador consiga chegar aos orbes e retornar à bomba.
+  const scored = all.map(c => ({
+    x:c.x, y:c.y,
+    fromStart:shortestPathDistance(maze,start,c),
+    toBomb:shortestPathDistance(maze,c,bomb)
+  }));
 
-  // Ordena por distância à bomba para garantir que os orbes não fiquem
-  // em uma região isolada do caminho de retorno.
-  const scored = (preferred.length >= count ? preferred : all).map(c => ({
-    ...c,
-    fromStart: shortestPathDistance(maze, start, c),
-    toBomb: shortestPathDistance(maze, c, bomb)
-  })).filter(c => Number.isFinite(c.fromStart) && Number.isFinite(c.toBomb));
+  const preferred = dead.map(c => ({
+    x:c.x, y:c.y,
+    fromStart:shortestPathDistance(maze,start,c),
+    toBomb:shortestPathDistance(maze,c,bomb)
+  }));
 
-  scored.sort((a,b) => (b.fromStart+b.toBomb) - (a.fromStart+a.toBomb));
-  const pool = shuffle(scored, rng);
+  const pool = shuffle(
+    preferred.concat(scored.filter(c =>
+      !preferred.some(p=>p.x===c.x && p.y===c.y)
+    )),
+    rng
+  );
 
-  // Seleção espaçada: evita concentrar todos os orbes na mesma região.
+  // Em um labirinto perfeito toda célula navegável pertence ao mesmo
+  // componente; selecionamos posições espalhadas por distância na rota.
+  const maxRoute = pool.reduce(
+    (m,c)=>Math.max(m,c.fromStart+c.toBomb), 0
+  );
+
   const chosen = [];
-  for (const candidate of pool) {
+  for (const candidate of pool.sort((a,b)=>
+    (a.fromStart+a.toBomb)-(b.fromStart+b.toBomb)
+  )) {
     if (chosen.length >= count) break;
+    const progress = maxRoute > 0 ? (candidate.fromStart+candidate.toBomb)/maxRoute : 0;
     const farEnough = chosen.every(o =>
-      Math.abs(o.x-candidate.x) + Math.abs(o.y-candidate.y) >= 4
+      Math.abs(o.x-candidate.x)+Math.abs(o.y-candidate.y) >= 3
     );
-    if (farEnough) chosen.push(candidate);
+    const routeSpread = chosen.every(o => {
+      const p1=o.fromStart/(maxRoute||1);
+      return Math.abs(p1-progress) >= 0.10;
+    });
+    if (farEnough && routeSpread) chosen.push(candidate);
   }
+
+  // Fallback determinístico para garantir a quantidade pedida.
   for (const candidate of pool) {
     if (chosen.length >= count) break;
-    if (!chosen.some(o => o.x===candidate.x && o.y===candidate.y)) chosen.push(candidate);
+    if (!chosen.some(o=>o.x===candidate.x && o.y===candidate.y)) {
+      chosen.push(candidate);
+    }
   }
+
   return chosen.slice(0,count);
 }
 
