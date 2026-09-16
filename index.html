@@ -610,6 +610,85 @@ function findReachableCells(maze, start, excludeKeys) {
   return cells;
 }
 
+function reachableFrom(maze, start) {
+  const cells = [];
+  const queue = [{ x: start.x, y: start.y }];
+  const seen = new Set([start.x + ',' + start.y]);
+  for (let i = 0; i < queue.length; i++) {
+    const cur = queue[i];
+    cells.push(cur);
+    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const nx = cur.x + dx, ny = cur.y + dy;
+      if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue;
+      if (maze[ny][nx] !== 0) continue;
+      const key = nx + ',' + ny;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      queue.push({x:nx,y:ny});
+    }
+  }
+  return cells;
+}
+
+function shortestPathDistance(maze, start, goal) {
+  const queue = [{x:start.x,y:start.y,d:0}];
+  const seen = new Set([start.x + ',' + start.y]);
+  for (let i=0; i<queue.length; i++) {
+    const cur=queue[i];
+    if (cur.x===goal.x && cur.y===goal.y) return cur.d;
+    for (const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const nx=cur.x+dx, ny=cur.y+dy;
+      if (nx<0||ny<0||nx>=COLS||ny>=ROWS||maze[ny][nx]!==0) continue;
+      const key=nx+','+ny;
+      if(seen.has(key)) continue;
+      seen.add(key);
+      queue.push({x:nx,y:ny,d:cur.d+1});
+    }
+  }
+  return Infinity;
+}
+
+function chooseGuaranteedOrbCells(maze, start, bomb, count, rng) {
+  const all = reachableFrom(maze, start).filter(c =>
+    !(c.x===start.x && c.y===start.y) &&
+    !(c.x===bomb.x && c.y===bomb.y) &&
+    Math.abs(c.x-start.x)+Math.abs(c.y-start.y) > 2
+  );
+  const dead = findDeadEnds(maze, new Set([
+    start.x+','+start.y,
+    bomb.x+','+bomb.y
+  ]));
+
+  const byKey = new Map(all.map(c => [c.x+','+c.y, c]));
+  const preferred = dead.filter(c => byKey.has(c.x+','+c.y));
+
+  // Ordena por distância à bomba para garantir que os orbes não fiquem
+  // em uma região isolada do caminho de retorno.
+  const scored = (preferred.length >= count ? preferred : all).map(c => ({
+    ...c,
+    fromStart: shortestPathDistance(maze, start, c),
+    toBomb: shortestPathDistance(maze, c, bomb)
+  })).filter(c => Number.isFinite(c.fromStart) && Number.isFinite(c.toBomb));
+
+  scored.sort((a,b) => (b.fromStart+b.toBomb) - (a.fromStart+a.toBomb));
+  const pool = shuffle(scored, rng);
+
+  // Seleção espaçada: evita concentrar todos os orbes na mesma região.
+  const chosen = [];
+  for (const candidate of pool) {
+    if (chosen.length >= count) break;
+    const farEnough = chosen.every(o =>
+      Math.abs(o.x-candidate.x) + Math.abs(o.y-candidate.y) >= 4
+    );
+    if (farEnough) chosen.push(candidate);
+  }
+  for (const candidate of pool) {
+    if (chosen.length >= count) break;
+    if (!chosen.some(o => o.x===candidate.x && o.y===candidate.y)) chosen.push(candidate);
+  }
+  return chosen.slice(0,count);
+}
+
 function findDeadEnds(maze, excludeKeys) {
   const deads = [];
   for (let y = 1; y < ROWS - 1; y++) {
@@ -759,25 +838,21 @@ function loadLevel(n) {
   const nOrbs = Math.min(5, 3 + Math.floor(n / 100));
   const rng = mulberry32(n * 1013 + 7);
 
-  // FIX: os orbes agora são escolhidos somente entre células comprovadamente
-  // alcançáveis a partir do início. Isso evita fases com orb em posição inválida.
-  let candidates = findReachableCells(state.maze, START, exclude);
-  candidates = candidates.filter(c =>
-    Math.abs(c.x - START.x) + Math.abs(c.y - START.y) > 5
-  );
-
-  // Preferimos becos sem saída, mas nunca deixamos faltar a quantidade de orbes.
-  const deadEnds = findDeadEnds(state.maze, exclude).filter(d =>
-    Math.abs(d.x - START.x) + Math.abs(d.y - START.y) > 5
-  );
-  const preferred = shuffle(deadEnds, rng);
-  const fallback = shuffle(
-    candidates.filter(c => !preferred.some(d => d.x === c.x && d.y === c.y)),
+  // Garante que todos os orbes estejam em células acessíveis e que
+  // exista caminho de cada orb de volta até a bomba.
+  const orbCells = chooseGuaranteedOrbCells(
+    state.maze,
+    START,
+    EXIT,
+    nOrbs,
     rng
   );
-  const orbCells = preferred.concat(fallback).slice(0, nOrbs);
 
-  state.orbs = orbCells.map(d => ({ x: d.x, y: d.y, collected: false }));
+  state.orbs = orbCells.map(d => ({
+    x: d.x,
+    y: d.y,
+    collected: false
+  }));
   state.orbsTotal = state.orbs.length;
   state.orbsCollected = 0;
 
@@ -1200,6 +1275,17 @@ document.getElementById('btn-restart').addEventListener('click', (e) => { e.prev
   const dpad = document.getElementById('dpad');
   if (!dpad) return;
 
+  const center = dpad.querySelector('.dpad-center');
+  if (center) {
+    const interact = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      interactWithBomb();
+    };
+    center.addEventListener('pointerdown', interact, { passive: false });
+    center.addEventListener('click', interact, { passive: false });
+  }
+
   const directions = {
     up:    [0, -1],
     down:  [0,  1],
@@ -1270,6 +1356,11 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     e.preventDefault();
     if (state.status === 'playing' || state.status === 'paused') doPauseToggle();
+    return;
+  }
+  if (e.key === 'p' || e.key === 'P') {
+    e.preventDefault();
+    interactWithBomb();
     return;
   }
   if (e.key === 'r' || e.key === 'R') {
